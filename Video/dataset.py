@@ -49,7 +49,7 @@ class VideoDataset(Dataset):
                 transforms.ToPILImage(),
                 transforms.Grayscale(num_output_channels=1),
                 transforms.CenterCrop(88),
-                transforms.ToTensor(),
+                transforms.ToTensor(),  # divides by 255 by default
                 transforms.Normalize([0.413621], [0.1688])
             ]
         video = [transforms.Compose(tfs)(frame) for frame in video]
