@@ -4,6 +4,7 @@ import torch
 import re
 from operator import mul
 import functools
+import math
 
 
 class GRU(nn.Module):
