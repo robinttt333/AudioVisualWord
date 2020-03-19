@@ -1,13 +1,28 @@
 from dataset import VideoDataset
 from torch.utils.data.dataloader import DataLoader
 import config
-from model import Lipreader
+from model import Lipreader, TemporalCNN, GRU
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as lrScheduler
 import math
 import argparse
 import torch
+
+
+class NLLSequenceLoss(nn.Module):
+
+    def __init__(self):
+        super(NLLSequenceLoss, self).__init__()
+        self.criterion = nn.NLLLoss()
+
+    def forward(self, input, target):
+        loss = 0.0
+        transposed = input.transpose(0, 1).contiguous()
+        for i in range(0, 29):
+            loss += self.criterion(transposed[i], target)
+
+        return loss
 
 
 def freezeLayers(model, stage):
@@ -82,7 +97,9 @@ if __name__ == "__main__":
     trainDataLoader = DataLoader(trainDataset, batch_size=config.data["batchSize"],
                                  shuffle=config.data["shuffle"], num_workers=config.data["workers"])
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss() if isinstance(
+        model.Backend, TemporalCNN) else NLLSequenceLoss()
+
     if mode == "train":
         model.train()
         model = freezeLayers(model, stage)

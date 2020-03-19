@@ -75,7 +75,7 @@ class Resnet(nn.Module):
 class Lipreader(nn.Module):
     def __init__(self):
         super(Lipreader, self).__init__()
-        stage = 1
+        stage = 2
         self.convolution3d = nn.Sequential(
             nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(
                 1, 2, 2), padding=(2, 3, 3), bias=False),
