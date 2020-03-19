@@ -76,7 +76,7 @@ class Lipreader(nn.Module):
     def __init__(self):
         super(Lipreader, self).__init__()
         stage = 1
-        self.FrontEnd = nn.Sequential(
+        self.convolution3d = nn.Sequential(
             nn.Conv3d(1, 64, kernel_size=(5, 7, 7), stride=(
                 1, 2, 2), padding=(2, 3, 3), bias=False),
             nn.BatchNorm3d(64),
@@ -105,7 +105,7 @@ class Lipreader(nn.Module):
         self.apply(weights_init)
 
     def forward(self, x):
-        x = self.FrontEnd(x)
+        x = self.convolution3d(x)
         x = self.resnet34(x)
         x = x.transpose(1, 2)
         x = self.Backend(x)
