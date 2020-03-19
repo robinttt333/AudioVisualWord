@@ -1,6 +1,9 @@
 import torch.nn as nn
 from torchvision.models import resnet
 import torch
+import re
+from operator import mul
+import functools
 
 
 class GRU(nn.Module):
@@ -82,6 +85,23 @@ class Lipreader(nn.Module):
         )
         self.resnet34 = Resnet()
         self.Backend = TemporalCNN() if stage == 1 else GRU()
+
+        def weights_init(m):
+            classname = m.__class__.__name__
+            if classname in ["Conv1d", "Conv2d", "Conv3d"]:
+                n = functools.reduce(mul, m.kernel_size) * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif re.search("BatchNorm[123]d", classname):
+                m.weight.data.fill_(1.0)
+                if m.bias is not None:
+                    m.bias.data.fill_(0)
+            elif re.search("Linear", classname):
+                if m.bias is not None:
+                    m.bias.data.fill_(0)
+
+        self.apply(weights_init)
 
     def forward(self, x):
         x = self.FrontEnd(x)
