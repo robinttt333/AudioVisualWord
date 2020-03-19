@@ -72,16 +72,18 @@ def trainModel(stage, adam, model, scheduler, dataLoader):
 
 
 if __name__ == "__main__":
-    model = Lipreader()
-    adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
-    scheduler = lrScheduler.LambdaLR(
-        adam, lr_lambda=[updateLRFunc])
-
     parser = argparse.ArgumentParser(description='Process command line args')
     parser.add_argument('--load', type=str,
                         help='Name of the file containing the model')
     args = parser.parse_args()
     fileName = args.load
+
+    model = Lipreader(
+        int(fileName.split('_')[1][0]) if fileName is not None else 1)
+    adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
+    scheduler = lrScheduler.LambdaLR(
+        adam, lr_lambda=[updateLRFunc])
+
     startEpoch = 1
     stage = 1
     epochs = 30
@@ -105,7 +107,7 @@ if __name__ == "__main__":
     if mode == "train":
         model.train()
         model = freezeLayers(model, stage)
-        for epoch in range(startEpoch - 1, epochs):
+        for epoch in range(startEpoch - 1, epochs + 1):
             trainModel(1, adam, model, scheduler, trainDataLoader)
             saveModel(
                 model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
