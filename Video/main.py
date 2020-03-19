@@ -11,6 +11,32 @@ import torch
 import torch.nn.functional as F
 
 
+def temporalCNNValidator(outputs, labels):
+    """ Here we get a batchSize * total labels(500) outputs shape and batchSize shaped labels.eg - 
+        Consider the word afternoon [ 10 * 500 ] -----> [1]
+        It maps from a 10 * 500 tensor(matrix) to a single label.  
+    """
+    """Calculate the max for each batch out of the 500 possible outputs. In return we get the 
+    index of the word along with its actual probability which is of little use to us"""
+    maxvalues, maxindices = torch.max(outputs, 1)
+    count = 0
+    for i in range(0, labels.size(0)):
+        if maxindices[i] == labels[i]:
+            count += 1
+
+    return count  # return the number of correct predictions in the batch
+
+
+def gruValidator(outputs, labels):
+    """The input is of the form batchsize * frames * total labels. So we need to get the correct
+    label corresponding to each frame.We first take avg across all 29 frames in a video giving us back a vector with
+    dimensions batchSize * total labels and then the process is similar to what we did in the function above."""
+
+    # same as taking avg as sum/29 for all labels
+    outputsTransformed = torch.sum(outputs, 1)
+    return temporalCNNValidator(outputsTransformed, labels)
+
+
 class NLLSequenceLoss(nn.Module):
 
     def __init__(self):
@@ -71,6 +97,26 @@ def trainModel(stage, adam, model, scheduler, dataLoader):
     scheduler.step()
 
 
+def validateModel(model, epoch):
+    model.eval()
+    validationDataset = VideoDataset("val")
+    validationDataLoader = DataLoader(validationDataset, batch_size=config.data["batchSize"],
+                                      shuffle=config.data["shuffle"], num_workers=config.data["workers"])
+
+    criterion = temporalCNNValidator if isinstance(
+        model.Backend, TemporalCNN) else gruValidator
+
+    correct = 0
+    total = 0
+    for idx, batch in enumerate(validationDataLoader):
+        target, input = batch[0], batch[1]
+        op = model(input.transpose(1, 2))
+        correct += criterion(op, target)
+        total += len(batch)
+    print(
+        f'Out of {total} videos,{correct} were classified correctly after epoch {epoch+1}')
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process command line args')
     parser.add_argument('--load', type=str,
@@ -87,7 +133,6 @@ if __name__ == "__main__":
     startEpoch = 1
     stage = 1
     epochs = 30
-    mode = "train"
     lr = 3e-4
     if fileName is not None:
         model, optimizer, scheduler = loadModel(
@@ -104,14 +149,11 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss() if isinstance(
         model.Backend, TemporalCNN) else NLLSequenceLoss()
 
-    if mode == "train":
-        model.train()
-        model = freezeLayers(model, stage)
-        for epoch in range(startEpoch - 1, epochs + 1):
-            trainModel(1, adam, model, scheduler, trainDataLoader)
-            saveModel(
-                model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
-    elif mode == "val":
-        validateModel()
-    else:
-        testModel()
+    model.train()
+    model = freezeLayers(model, stage)
+    for epoch in range(startEpoch - 1, epochs + 1):
+        trainModel(1, adam, model, scheduler, trainDataLoader)
+        saveModel(
+            model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
+
+        validateModel(model, epoch)
