@@ -8,6 +8,7 @@ import torch.optim.lr_scheduler as lrScheduler
 import math
 import argparse
 import torch
+import torch.nn.functional as F
 
 
 class NLLSequenceLoss(nn.Module):
@@ -18,6 +19,7 @@ class NLLSequenceLoss(nn.Module):
 
     def forward(self, input, target):
         loss = 0.0
+        input = F.softmax(input, dim=2)
         transposed = input.transpose(0, 1).contiguous()
         for i in range(0, 29):
             loss += self.criterion(transposed[i], target)
