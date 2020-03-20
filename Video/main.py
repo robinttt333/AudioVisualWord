@@ -9,14 +9,16 @@ import math
 import argparse
 import torch
 import torch.nn.functional as F
+import os
+import csv
 
 
 def temporalCNNValidator(outputs, labels):
-    """ Here we get a batchSize * total labels(500) outputs shape and batchSize shaped labels.eg - 
+    """ Here we get a batchSize * total labels(500) outputs shape and batchSize shaped labels.eg -
         Consider the word afternoon [ 10 * 500 ] -----> [1]
-        It maps from a 10 * 500 tensor(matrix) to a single label.  
+        It maps from a 10 * 500 tensor(matrix) to a single label.
     """
-    """Calculate the max for each batch out of the 500 possible outputs. In return we get the 
+    """Calculate the max for each batch out of the 500 possible outputs. In return we get the
     index of the word along with its actual probability which is of little use to us"""
     maxvalues, maxindices = torch.max(outputs, 1)
     count = 0
@@ -53,6 +55,15 @@ class NLLSequenceLoss(nn.Module):
         return loss
 
 
+def changeLayers(model, stage, pretrainedDict):
+    currentStateDict = model.state_dict()
+    pretrainedDict = {k: v for k,
+                      v in pretrainedDict.items() if k in currentStateDict}
+    currentStateDict.update(pretrainedDict)
+    model.load_state_dict(currentStateDict)
+    return model
+
+
 def freezeLayers(model, stage):
     if stage == 2:
         for param in model.convolution3d.parameters():
@@ -62,16 +73,30 @@ def freezeLayers(model, stage):
     return model
 
 
-def loadModel(model, optimizer, scheduler, path, stage):
+def loadModel(model, optimizer, scheduler, fileName, stage, updateStage):
+    path = os.path.join(
+        config.savedModelPath["path"], fileName.split('.')[0], fileName)
     checkpoint = torch.load(path)
-    model.load_state_dict(checkpoint['state_dict'])
+    # We want lr = .003 if stage is changed
+    if not updateStage:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+    else:
+        model = changeLayers(model, stage, checkpoint["state_dict"])
     model = freezeLayers(model, stage)
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    scheduler.load_state_dict(checkpoint['scheduler'])
     return model, optimizer, scheduler
 
 
-def saveModel(model, optimizer, scheduler, path):
+def saveModel(model, optimizer, scheduler, fileName):
+    print(optimizer.param_groups[0]['lr'])
+    path = config.savedModelPath["path"]
+    if not os.path.exists(path):
+        os.mkdir(path)
+    dir = fileName.split(".")[0]
+    path = os.path.join(path, dir)
+    if not os.path.exists(path):
+        os.mkdir(path)
+    path = os.path.join(path, fileName)
     torch.save({
         'state_dict': model.state_dict(),
         'optimizer': optimizer.state_dict(),
@@ -85,7 +110,7 @@ def updateLRFunc(epoch):
     return 1
 
 
-def trainModel(stage, adam, model, scheduler, dataLoader):
+def trainModel(stage, adam, model, scheduler, dataLoader, criterion):
     for idx, batch in enumerate(dataLoader):
         target, input = batch[0], batch[1]
         op = model(input.transpose(1, 2))
@@ -97,14 +122,9 @@ def trainModel(stage, adam, model, scheduler, dataLoader):
     scheduler.step()
 
 
-def validateModel(model, epoch):
+def validateModel(model, epoch, validationDataLoader, criterion, stage):
     model.eval()
-    validationDataset = VideoDataset("val")
-    validationDataLoader = DataLoader(validationDataset, batch_size=config.data["batchSize"],
-                                      shuffle=config.data["shuffle"], num_workers=config.data["workers"])
-
-    criterion = temporalCNNValidator if isinstance(
-        model.Backend, TemporalCNN) else gruValidator
+    validationStats = []
 
     correct = 0
     total = 0
@@ -113,8 +133,29 @@ def validateModel(model, epoch):
         op = model(input.transpose(1, 2))
         correct += criterion(op, target)
         total += len(batch)
+        validationStat = {
+            "Stage": stage,
+            "Epoch": epoch,
+            "Batch": idx + 1,
+            "validationVideos": input.shape[0],
+            "correctValidationOutputs": correct,
+        }
+        validationStats.append(validationStat)
+    saveStatsToCSV(
+        validationStats, epoch, "validation", stage)
     print(
-        f'Out of {total} videos,{correct} were classified correctly after epoch {epoch+1}')
+        f"Out of {total} videos, {correct} {'was' if correct==1 else 'were'} classified  correctly after epoch {epoch}")
+
+
+def saveStatsToCSV(data, epoch, mode, stage):
+    fileName = f"Epoch{epoch}_{stage}.csv"
+    dir = f"Epoch{epoch}_{stage}"
+    file = os.path.join(config.savedModelPath["path"], dir, fileName)
+    with open(file, 'w') as csvfile:
+        fieldnames = data[0].keys()
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(data)
 
 
 if __name__ == "__main__":
@@ -124,36 +165,65 @@ if __name__ == "__main__":
     args = parser.parse_args()
     fileName = args.load
 
-    model = Lipreader(
-        int(fileName.split('_')[1][0]) if fileName is not None else 1)
-    adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
-    scheduler = lrScheduler.LambdaLR(
-        adam, lr_lambda=[updateLRFunc])
-
+    # default setup
     startEpoch = 1
     stage = 1
-    epochs = 30
+    epochs = config.stage["epochs"][stage-1]
     lr = 3e-4
     if fileName is not None:
-        model, optimizer, scheduler = loadModel(
-            model, adam, scheduler, fileName, stage)
         # File is stored as Epoch23_1.pt
         startEpoch = int(fileName.split('_')[0][5:]) + 1
         stage = int(fileName.split('_')[1][0])
         epochs = config.stage["epochs"][stage - 1]
 
+        if startEpoch > epochs:
+            if stage == 3:
+                print("Succesfully trained all 3 stages")
+                exit(0)
+            startEpoch = 1
+            stage = stage + 1
+            epochs = config.stage["epochs"][stage - 1]
+            print(f"Updated stage to {stage}")
+
+        path = config.savedModelPath["path"]
+        if not os.path.exists(path):
+            os.mkdir(path)
+        dir = fileName.split(".")[0]
+        path = os.path.join(path, dir)
+
+        model = Lipreader(stage)
+        adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
+        scheduler = lrScheduler.LambdaLR(adam, lr_lambda=[updateLRFunc])
+
+        if os.path.exists(path) and os.path.exists(os.path.join(path, fileName)):
+            model, optimizer, scheduler = loadModel(
+                model, adam, scheduler, fileName, stage, startEpoch == 1)
+        else:
+            raise Exception("No such file exixts")
+    else:
+        model = Lipreader(stage)
+        adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
+        scheduler = lrScheduler.LambdaLR(adam, lr_lambda=[updateLRFunc])
+
     trainDataset = VideoDataset("train")
     trainDataLoader = DataLoader(trainDataset, batch_size=config.data["batchSize"],
                                  shuffle=config.data["shuffle"], num_workers=config.data["workers"])
+    validationDataset = VideoDataset("val")
+    validationDataLoader = DataLoader(validationDataset, batch_size=config.data["batchSize"],
+                                      shuffle=config.data["shuffle"], num_workers=config.data["workers"])
 
-    criterion = nn.CrossEntropyLoss() if isinstance(
+    trainCriterion = nn.CrossEntropyLoss() if isinstance(
         model.Backend, TemporalCNN) else NLLSequenceLoss()
+
+    validationCriterion = temporalCNNValidator if isinstance(
+        model.Backend, TemporalCNN) else gruValidator
 
     model.train()
     model = freezeLayers(model, stage)
-    for epoch in range(startEpoch - 1, epochs + 1):
-        trainModel(1, adam, model, scheduler, trainDataLoader)
+    for epoch in range(startEpoch - 1, epochs):
+        trainModel(1, adam, model, scheduler, trainDataLoader, trainCriterion)
         saveModel(
             model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
-
-        validateModel(model, epoch)
+        validateModel(model, epoch+1, validationDataLoader,
+                      validationCriterion, stage)
+    print(f"Successfully completed stage {stage} of training")

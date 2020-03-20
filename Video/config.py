@@ -1,3 +1,4 @@
+import os
 data = {
     "path": "../data",
     "batchSize": 36,
@@ -7,4 +8,8 @@ data = {
 
 stage = {
     "epochs": [30, 5, 30]
+}
+
+savedModelPath = {
+    "path": os.path.join(os.getcwd(), "savedModels")
 }
