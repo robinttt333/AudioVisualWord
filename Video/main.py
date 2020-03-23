@@ -173,6 +173,9 @@ if __name__ == "__main__":
     epochs = config.stage["epochs"][stage-1]
     lr = 3e-4
     if fileName is not None:
+        if not os.path.exists(os.path.join('.', 'savedModels', fileName.split('.')[0])):
+            raise Exception("No such file exists")
+
         # File is stored as Epoch23_1.pt
         startEpoch = int(fileName.split('_')[0][5:]) + 1
         stage = int(fileName.split('_')[1][0])
@@ -200,6 +203,10 @@ if __name__ == "__main__":
         if os.path.exists(path) and os.path.exists(os.path.join(path, fileName)):
             model, optimizer, scheduler = loadModel(
                 model, adam, scheduler, fileName, stage, startEpoch == 1)
+            if startEpoch is not 1:
+                print(
+                    f"Successfully loaded model with last completed epoch as {startEpoch-1}")
+
         else:
             raise Exception("No such file exixts")
     else:
@@ -227,5 +234,5 @@ if __name__ == "__main__":
         saveModel(
             model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
         validateModel(model, epoch+1, validationDataLoader,
-                      validationCriterion, stage, lr)
+                      validationCriterion, stage, old_lr)
     print(f"Successfully completed stage {stage} of training")
