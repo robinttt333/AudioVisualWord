@@ -42,7 +42,8 @@ class TemporalCNN(nn.Module):
 
     def forward(self, x):
         x = self.backend_conv1(x)
-        x = self.backend_conv2(torch.mean(x, 2))
+        x = torch.mean(x, 2)
+        x = self.backend_conv2()
         return x
 
 

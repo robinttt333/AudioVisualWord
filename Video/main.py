@@ -88,7 +88,6 @@ def loadModel(model, optimizer, scheduler, fileName, stage, updateStage):
 
 
 def saveModel(model, optimizer, scheduler, fileName):
-    print(optimizer.param_groups[0]['lr'])
     path = config.savedModelPath["path"]
     if not os.path.exists(path):
         os.mkdir(path)
@@ -111,18 +110,21 @@ def updateLRFunc(epoch):
 
 
 def trainModel(stage, adam, model, scheduler, dataLoader, criterion):
+    model.train()
     for idx, batch in enumerate(dataLoader):
         target, input = batch[0], batch[1]
         op = model(input.transpose(1, 2))
         loss = criterion(op, target)
         adam.zero_grad()
         loss.backward()
+        old_lr = adam.param_groups[0]['lr']
         adam.step()
 
     scheduler.step()
+    return old_lr
 
 
-def validateModel(model, epoch, validationDataLoader, criterion, stage):
+def validateModel(model, epoch, validationDataLoader, criterion, stage, lr):
     model.eval()
     validationStats = []
 
@@ -144,7 +146,7 @@ def validateModel(model, epoch, validationDataLoader, criterion, stage):
     saveStatsToCSV(
         validationStats, epoch, "validation", stage)
     print(
-        f"Out of {total} videos, {correct} {'was' if correct==1 else 'were'} classified  correctly after epoch {epoch}")
+        f"Out of {total} videos, {correct} {'was' if correct==1 else 'were'} classified  correctly after epoch {epoch} with lr = {lr} ")
 
 
 def saveStatsToCSV(data, epoch, mode, stage):
@@ -218,12 +220,12 @@ if __name__ == "__main__":
     validationCriterion = temporalCNNValidator if isinstance(
         model.Backend, TemporalCNN) else gruValidator
 
-    model.train()
     model = freezeLayers(model, stage)
     for epoch in range(startEpoch - 1, epochs):
-        trainModel(1, adam, model, scheduler, trainDataLoader, trainCriterion)
+        old_lr = trainModel(1, adam, model, scheduler,
+                            trainDataLoader, trainCriterion)
         saveModel(
             model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
         validateModel(model, epoch+1, validationDataLoader,
-                      validationCriterion, stage)
+                      validationCriterion, stage, lr)
     print(f"Successfully completed stage {stage} of training")

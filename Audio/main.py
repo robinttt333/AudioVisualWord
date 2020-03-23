@@ -66,9 +66,9 @@ def changeLayers(model, stage, pretrainedDict):
 
 def freezeLayers(model, stage):
     if stage == 2:
-        for param in model.convolution3d.parameters():
+        for param in model.convolution1d.parameters():
             param.requires_grad = False
-        for param in model.resnet34.parameters():
+        for param in model.resnet18.parameters():
             param.requires_grad = False
     return model
 
@@ -110,18 +110,21 @@ def updateLRFunc(epoch):
 
 
 def trainModel(stage, adam, model, scheduler, dataLoader, criterion):
+    model.train()
     for idx, batch in enumerate(dataLoader):
         target, input = batch[0], batch[1]
         op = model(input)
         loss = criterion(op, target)
         adam.zero_grad()
         loss.backward()
+        old_lr = adam.param_groups[0]['lr']
         adam.step()
 
     scheduler.step()
+    return old_lr
 
 
-def validateModel(model, epoch, validationDataLoader, criterion, stage):
+def validateModel(model, epoch, validationDataLoader, criterion, stage, lr):
     model.eval()
     validationStats = []
 
@@ -143,7 +146,7 @@ def validateModel(model, epoch, validationDataLoader, criterion, stage):
     saveStatsToCSV(
         validationStats, epoch, "validation", stage)
     print(
-        f"Out of {total} videos, {correct} {'was' if correct==1 else 'were'} classified  correctly after epoch {epoch}")
+        f"Out of {total} videos, {correct} {'was' if correct==1 else 'were'} classified  correctly after epoch {epoch}  with lr = {lr} ")
 
 
 def saveStatsToCSV(data, epoch, mode, stage):
@@ -217,12 +220,14 @@ if __name__ == "__main__":
     validationCriterion = temporalCNNValidator if isinstance(
         model.Backend, TemporalCNN) else gruValidator
 
-    model.train()
     model = freezeLayers(model, stage)
+
     for epoch in range(startEpoch - 1, epochs):
-        trainModel(1, adam, model, scheduler, trainDataLoader, trainCriterion)
+        old_lr = trainModel(1, adam, model, scheduler,
+                            trainDataLoader, trainCriterion)
         saveModel(
             model, adam, scheduler, f'Epoch{epoch+1}_{stage}.pt')
         validateModel(model, epoch+1, validationDataLoader,
-                      validationCriterion, stage)
-    print(f"Successfully completed stage {stage} of training")
+                      validationCriterion, stage, old_lr)
+    print(
+        f"Successfully completed stage {stage} of training")
