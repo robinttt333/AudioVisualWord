@@ -1,6 +1,7 @@
 import os
 data = {
     "path": "../data",
+    "processedPath": "./data",
     "batchSize": 36,
     "shuffle": True,
     "workers": 4,

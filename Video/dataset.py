@@ -23,7 +23,7 @@ class VideoDataset(Dataset):
         return self.size
 
     def init(self):
-        path = config.data["path"]
+        path = config.data["processedPath"]
         ct = 0
         labels = os.listdir(os.path.join(os.curdir, path))
         for i, label in enumerate(labels):
