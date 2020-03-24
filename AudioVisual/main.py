@@ -1,7 +1,8 @@
-from dataset import VideoDataset
+from model import Lipreader
+from torch.utils.data import DataLoader
+from dataset import AudioVideoDataset
 from torch.utils.data.dataloader import DataLoader
 import config
-from model import Lipreader, TemporalCNN, GRU
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as lrScheduler
@@ -11,22 +12,6 @@ import torch
 import torch.nn.functional as F
 import os
 import csv
-
-
-def temporalCNNValidator(outputs, labels):
-    """ Here we get a batchSize * total labels(500) outputs shape and batchSize shaped labels.eg -
-        Consider the word afternoon [ 10 * 500 ] -----> [1]
-        It maps from a 10 * 500 tensor(matrix) to a single label.
-    """
-    """Calculate the max for each batch out of the 500 possible outputs. In return we get the
-    index of the word along with its actual probability which is of little use to us"""
-    maxvalues, maxindices = torch.max(outputs, 1)
-    count = 0
-    for i in range(0, labels.size(0)):
-        if maxindices[i] == labels[i]:
-            count += 1
-
-    return count  # return the number of correct predictions in the batch
 
 
 def gruValidator(outputs, labels):
@@ -112,17 +97,17 @@ def updateLRFunc(epoch):
 def trainModel(stage, adam, model, scheduler, dataLoader, criterion):
     model.train()
     for idx, batch in enumerate(dataLoader):
-        target, input = batch[0], batch[1]
-        input = input.transpose(1, 2)
-        op = model(input)
-        loss = criterion(op, target)
-        adam.zero_grad()
-        loss.backward()
-        old_lr = adam.param_groups[0]['lr']
-        adam.step()
+        target, audioInput, videoInput = batch[0], batch[1], batch[2]
+        op = model((audioInput, videoInput))
+        # loss = criterion(op, target)
+        # adam.zero_grad()
+        # loss.backward()
+        # old_lr = adam.param_groups[0]['lr']
+        # adam.step()
+        print(op.shape)
 
     scheduler.step()
-    return old_lr
+    return 1
 
 
 def validateModel(model, epoch, validationDataLoader, criterion, stage, lr):
@@ -197,7 +182,7 @@ if __name__ == "__main__":
         dir = fileName.split(".")[0]
         path = os.path.join(path, dir)
 
-        model = Lipreader(stage)
+        model = Lipreader()
         adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
         scheduler = lrScheduler.LambdaLR(adam, lr_lambda=[updateLRFunc])
 
@@ -211,24 +196,22 @@ if __name__ == "__main__":
         else:
             raise Exception("No such file exixts")
     else:
-        model = Lipreader(stage)
+        model = Lipreader()
         adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
         scheduler = lrScheduler.LambdaLR(adam, lr_lambda=[updateLRFunc])
 
-    trainDataset = VideoDataset("train")
+    trainDataset = AudioVideoDataset("train")
     trainDataLoader = DataLoader(trainDataset, batch_size=config.data["batchSize"],
                                  shuffle=config.data["shuffle"], num_workers=config.data["workers"])
-    validationDataset = VideoDataset("val")
+    validationDataset = AudioVideoDataset("val")
     validationDataLoader = DataLoader(validationDataset, batch_size=config.data["batchSize"],
                                       shuffle=config.data["shuffle"], num_workers=config.data["workers"])
 
-    trainCriterion = nn.CrossEntropyLoss() if isinstance(
-        model.Backend, TemporalCNN) else NLLSequenceLoss()
+    trainCriterion = NLLSequenceLoss()
 
-    validationCriterion = temporalCNNValidator if isinstance(
-        model.Backend, TemporalCNN) else gruValidator
+    validationCriterion = gruValidator
 
-    model = freezeLayers(model, stage)
+    # model = freezeLayers(model, stage)
     for epoch in range(startEpoch - 1, epochs):
         old_lr = trainModel(1, adam, model, scheduler,
                             trainDataLoader, trainCriterion)
