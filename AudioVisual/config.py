@@ -8,7 +8,7 @@ data = {
 }
 
 stage = {
-    "epochs": [1, 30]
+    "epochs": [5, 30]
 }
 
 savedModelPath = {

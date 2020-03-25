@@ -14,6 +14,22 @@ import os
 import csv
 
 
+def temporalCNNValidator(outputs, labels):
+    """ Here we get a batchSize * total labels(500) outputs shape and batchSize shaped labels.eg -
+        Consider the word afternoon [ 10 * 500 ] -----> [1]
+        It maps from a 10 * 500 tensor(matrix) to a single label.
+    """
+    """Calculate the max for each batch out of the 500 possible outputs. In return we get the
+    index of the word along with its actual probability which is of little use to us"""
+    maxvalues, maxindices = torch.max(outputs, 1)
+    count = 0
+    for i in range(0, labels.size(0)):
+        if maxindices[i] == labels[i]:
+            count += 1
+
+    return count  # return the number of correct predictions in the batch
+
+
 def gruValidator(outputs, labels):
     """The input is of the form batchsize * frames * total labels. So we need to get the correct
     label corresponding to each frame.We first take avg across all 29 frames in a video giving us back a vector with
@@ -50,11 +66,15 @@ def changeLayers(model, stage, pretrainedDict):
 
 
 def freezeLayers(model, stage):
-    if stage == 2:
-        for param in model.convolution3d.parameters():
+    if stage == 1:
+        for param in model.audioModel.parameters():
             param.requires_grad = False
-        for param in model.resnet34.parameters():
+        for param in model.videoModel.parameters():
             param.requires_grad = False
+
+    # for param in model.named_parameters():
+    #     print(param[0], param[1].requires_grad)
+
     return model
 
 
@@ -66,8 +86,6 @@ def loadModel(model, optimizer, scheduler, fileName, stage, updateStage):
     if not updateStage:
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
-    else:
-        model = changeLayers(model, stage, checkpoint["state_dict"])
     model = freezeLayers(model, stage)
     return model, optimizer, scheduler
 
@@ -99,15 +117,14 @@ def trainModel(stage, adam, model, scheduler, dataLoader, criterion):
     for idx, batch in enumerate(dataLoader):
         target, audioInput, videoInput = batch[0], batch[1], batch[2]
         op = model((audioInput, videoInput))
-        # loss = criterion(op, target)
-        # adam.zero_grad()
-        # loss.backward()
-        # old_lr = adam.param_groups[0]['lr']
-        # adam.step()
-        print(op.shape)
+        loss = criterion(op, target)
+        adam.zero_grad()
+        loss.backward()
+        old_lr = adam.param_groups[0]['lr']
+        adam.step()
 
     scheduler.step()
-    return 1
+    return old_lr
 
 
 def validateModel(model, epoch, validationDataLoader, criterion, stage, lr):
@@ -117,15 +134,15 @@ def validateModel(model, epoch, validationDataLoader, criterion, stage, lr):
     correct = 0
     total = 0
     for idx, batch in enumerate(validationDataLoader):
-        target, input = batch[0], batch[1]
-        op = model(input.transpose(1, 2))
+        target, audioInput, videoInput = batch[0], batch[1], batch[2]
+        op = model((audioInput, videoInput))
         correct += criterion(op, target)
-        total += len(batch)
+        total += len(batch[0])
         validationStat = {
             "Stage": stage,
             "Epoch": epoch,
             "Batch": idx + 1,
-            "validationVideos": input.shape[0],
+            "validationSamples": audioInput.shape[0],
             "correctValidationOutputs": correct,
         }
         validationStats.append(validationStat)
@@ -146,18 +163,49 @@ def saveStatsToCSV(data, epoch, mode, stage):
         writer.writerows(data)
 
 
+def loadModelFromScratch(model):
+    audioFile = os.path.join(os.getcwd(), '..', 'Audio',
+                             'savedModels', 'Epoch1_3', 'Epoch1_3.pt')
+    videoFile = os.path.join(os.getcwd(), '..', 'Video',
+                             'savedModels', 'Epoch1_3', 'Epoch1_3.pt')
+    if not os.path.exists(audioFile):
+        raise Exception("No file named Epoch1_3.pt exists for audio")
+    if not os.path.exists(videoFile):
+        raise Exception("No file named Epoch1_3.pt exists for video")
+
+    checkpointAudio = torch.load(audioFile)
+    checkpointVideo = torch.load(videoFile)
+    currentAudioStateDict = model.audioModel.state_dict()
+    currentVideoStateDict = model.videoModel.state_dict()
+
+    pretrainedAudioDict = {k: v for k,
+                           v in checkpointAudio['state_dict'].items() if k in currentAudioStateDict}
+    pretrainedVideoDict = {k: v for k,
+                           v in checkpointVideo['state_dict'].items() if k in currentVideoStateDict}
+
+    model.audioModel.load_state_dict(pretrainedAudioDict)
+    model.videoModel.load_state_dict(pretrainedVideoDict)
+
+    for param in model.audioModel.parameters():
+        param.requires_grad = False
+    for param in model.videoModel.parameters():
+        param.requires_grad = False
+
+    return model
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process command line args')
     parser.add_argument('--load', type=str,
                         help='Name of the file containing the model')
-    args = parser.parse_args()
-    fileName = args.load
 
+    args = parser.parse_args()
     # default setup
     startEpoch = 1
     stage = 1
     epochs = config.stage["epochs"][stage-1]
     lr = 3e-4
+    fileName = args.load
     if fileName is not None:
         if not os.path.exists(os.path.join('.', 'savedModels', fileName.split('.')[0])):
             raise Exception("No such file exists")
@@ -168,8 +216,8 @@ if __name__ == "__main__":
         epochs = config.stage["epochs"][stage - 1]
 
         if startEpoch > epochs:
-            if stage == 3:
-                print("Succesfully trained all 3 stages")
+            if stage == 2:
+                print("Succesfully trained all 2 stages")
                 exit(0)
             startEpoch = 1
             stage = stage + 1
@@ -197,6 +245,7 @@ if __name__ == "__main__":
             raise Exception("No such file exixts")
     else:
         model = Lipreader()
+        model = loadModelFromScratch(model)
         adam = optim.Adam(model.parameters(), lr=3e-4, weight_decay=0.)
         scheduler = lrScheduler.LambdaLR(adam, lr_lambda=[updateLRFunc])
 
@@ -211,7 +260,6 @@ if __name__ == "__main__":
 
     validationCriterion = gruValidator
 
-    # model = freezeLayers(model, stage)
     for epoch in range(startEpoch - 1, epochs):
         old_lr = trainModel(1, adam, model, scheduler,
                             trainDataLoader, trainCriterion)
